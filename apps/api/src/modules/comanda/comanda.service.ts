@@ -166,6 +166,20 @@ export async function fecharComanda(
     });
     const totalCentavos = calcularTotalComanda(pedidos);
 
+    // A conta mudou entre a tela e o clique: um pedido novo entrou pelo socket
+    // enquanto o dialogo estava aberto. O total aqui dentro esta CERTO — mas o
+    // operador combinou outro numero com o cliente, e o troco sairia do bolso
+    // de alguem. Recusar e mandar reler.
+    //
+    // Antes do VALOR_INSUFICIENTE de proposito: se a conta mudou, dizer "faltou
+    // dinheiro" manda o operador buscar mais notas em vez de reler a conta.
+    if (totalCentavos !== input.totalEsperadoCentavos) {
+      throw conflito(
+        'TOTAL_MUDOU',
+        `a conta mudou: a tela mostrava ${input.totalEsperadoCentavos}, o total agora e ${totalCentavos}`,
+      );
+    }
+
     let trocoCentavos: number | null = null;
     if (input.metodo === 'DINHEIRO') {
       const recebido = input.valorRecebidoCentavos!; // garantido pelo refine do Zod

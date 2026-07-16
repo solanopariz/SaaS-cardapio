@@ -3,8 +3,8 @@
 Pedidos por QR Code na mesa, painel de cozinha em tempo real, fechamento no caixa.
 
 > **Estado:** compila, migra, roda. Testado em Node 22.11 / Postgres 16.
-> `npm test` verde: 96 testes (31 em `shared`, 65 de integração no `api`), mais
-> 20 E2E em `npm run test:e2e`.
+> `npm test` verde: 100 testes (31 em `shared`, 69 de integração no `api`), mais
+> 23 E2E em `npm run test:e2e`.
 > As 5 invariantes SQL da migration 002 foram atacadas direto no banco, por fora
 > da aplicação, e todas rejeitam. O isolamento de rooms do socket foi verificado
 > com conexões reais — e o teste foi validado reintroduzindo a falha, para provar
@@ -189,6 +189,21 @@ que virava **500**. Quatro amigos pedindo junto: três tomavam "erro interno".
 
 A lição não é sobre lock. É que `FOR UPDATE` na linha certa não vale nada se a
 decisão for tomada **antes** dele.
+
+**E o lock não protege quem está fora do banco.** O total que o servidor calcula
+dentro da transação está sempre certo — mas o operador do caixa decidiu quanto
+cobrar olhando a tela, segundos antes. Se um pedido entrar nessa janela, o
+servidor cobra R$ 39,90 de uma pessoa que combinou R$ 28,90 e já contou o troco
+de uma nota de 50. Ninguém erra; o dinheiro some do mesmo jeito.
+
+Por isso `fecharComandaSchema` exige `totalEsperadoCentavos`: a tela declara o
+total que **exibiu**, e o fechamento compara dentro do lock — divergiu, 409
+`TOTAL_MUDOU`, e o operador relê a conta em vez de cobrar um número que não é
+mais o da mesa. O campo é obrigatório de propósito: opcional, seria um guarda que
+uma tela futura esquece em silêncio.
+
+O 409 vem **antes** do `VALOR_INSUFICIENTE`: se a conta mudou, dizer "faltou
+dinheiro" manda o operador buscar mais notas em vez de reler a conta.
 
 ### A chave de idempotência cobre o carrinho — e o que tem dentro dele
 
@@ -375,8 +390,12 @@ Alternativas descartadas, pra não serem redescobertas:
 - [ ] Ordenação (`ordem`) e imagem de produto na tela de admin: os campos existem
       no schema e na API, a tela ainda não os edita.
 - [x] ~~Campo de valor recebido em dinheiro no caixa (hoje assume valor exato)~~ —
-      este item estava errado: `valorRecebidoCentavos` e o cálculo de troco já
-      existiam no `fecharComanda`, com `refine` no Zod exigindo o valor quando o
-      método é `DINHEIRO`. Agora testado (valor insuficiente → 400, troco correto).
-      Falta só o campo na **tela** do caixa.
+      `valorRecebidoCentavos` e o cálculo de troco já existiam no `fecharComanda`;
+      o que faltava era a **tela**, e a falta não era inofensiva: a `CaixaPage`
+      mandava o total exato como valor recebido, então o troco era `R$ 0,00` em
+      todo fechamento em dinheiro desde que o projeto existe — e o `onSuccess`
+      descartava o número de qualquer jeito. Agora o operador digita o valor
+      (via `parsearBRL`), vê o troco enquanto digita, e o recibo mostra o troco
+      **que a API devolveu**, num diálogo que não fecha sozinho. Décimo segundo
+      bug do mesmo formato: dois lados corretos, ninguém ligando o fio.
 - [ ] `@socket.io/redis-adapter` ao passar de uma instância

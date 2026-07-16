@@ -56,6 +56,13 @@ export const fecharComandaSchema = z
     metodo: z.enum(METODOS_PAGAMENTO),
     /** So faz sentido em DINHEIRO, para calcular o troco. Em centavos. */
     valorRecebidoCentavos: z.number().int().nonnegative().nullish(),
+    /**
+     * O total que o operador TINHA NA TELA ao decidir cobrar. Obrigatorio: e o
+     * unico jeito de o servidor saber se a conta mudou embaixo dele (pedido
+     * novo entrou pelo socket com o dialogo aberto). Opcional, seria um guarda
+     * que uma tela futura esquece em silencio.
+     */
+    totalEsperadoCentavos: z.number().int().nonnegative(),
   })
   .refine((v) => v.metodo !== 'DINHEIRO' || v.valorRecebidoCentavos != null, {
     message: 'valorRecebidoCentavos e obrigatorio quando o metodo e DINHEIRO',
