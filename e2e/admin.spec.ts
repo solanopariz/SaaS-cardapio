@@ -139,6 +139,102 @@ test.describe('admin edita o cardapio', () => {
     await expect(cliente.getByText('Total: R$ 10,00')).toBeVisible(); // nao 30,00
   });
 
+  /**
+   * `ordem` do teclado do dono ate o celular do cliente.
+   *
+   * `Categoria.ordem` e `@default(0)` e o seed usa 1..4, entao categoria criada
+   * pelo painel nasce ACIMA de tudo — "Sobremesas" antes da Padaria. A tela nao
+   * editava o campo: o dono via o erro e nao tinha o que fazer. Mesma forma da
+   * `categoria.ativa` — o default era inofensivo ate o painel existir.
+   */
+  test('admin muda a ordem e o cardapio do cliente reordena', async ({ browser }) => {
+    const admin = await (await browser.newContext()).newPage();
+    await logarStaff(admin, EMAIL_ADMIN);
+    await expect(admin.getByRole('heading', { name: 'Cardapio' })).toBeVisible();
+
+    const categoria = unico('Sobremesas');
+    await admin.getByLabel('Nova categoria').fill(categoria);
+    await admin.getByRole('button', { name: /criar categoria/i }).click();
+    const secao = admin.locator('section').filter({ hasText: categoria });
+    await expect(secao).toBeVisible();
+
+    // Categoria sem produto nao aparece no /menu (menu.routes.ts:35).
+    await secao.getByLabel('Nome do produto').fill(unico('Pudim'));
+    await secao.getByLabel('Preco do produto').fill('12,00');
+    await secao.getByRole('button', { name: /adicionar/i }).click();
+
+    /**
+     * Contexto NOVO a cada leitura, nao `reload()`: o /menu manda
+     * `Cache-Control: max-age=30`, e o mesmo contexto poderia devolver o
+     * cardapio velho do cache — eu diagnosticaria "a ordem nao mudou" olhando
+     * para uma resposta que o servidor nem chegou a mandar.
+     */
+    const ordemNoCliente = async (apelido: string) => {
+      const cliente = await (await browser.newContext()).newPage();
+      await entrarComoCliente(cliente, apelido);
+      await expect(cliente.getByRole('heading', { name: /padaria/i })).toBeVisible();
+      return cliente.locator('section h2').allTextContents();
+    };
+
+    // CONTROLE POSITIVO: nasceu no topo MESMO. Sem isto, "agora esta embaixo"
+    // passaria tambem se ela nunca tivesse estado em cima.
+    const antes = await ordemNoCliente('Joana');
+    expect(
+      antes.indexOf(categoria),
+      `"${categoria}" (ordem=0) deveria nascer antes da Padaria (ordem=1). Cardapio: ${antes.join(' | ')}`,
+    ).toBeLessThan(antes.indexOf('Padaria'));
+
+    // O dono conserta pela tela.
+    await secao.getByLabel(`Ordem da categoria ${categoria}`, { exact: true }).fill('99');
+    await secao.getByRole('button', { name: `Salvar Ordem da categoria ${categoria}` }).click();
+
+    await expect
+      .poll(async () => (await prisma.categoria.findFirst({ where: { nome: categoria } }))?.ordem)
+      .toBe(99);
+
+    const depois = await ordemNoCliente('Kelly');
+    expect(
+      depois.indexOf(categoria),
+      `ordem=99 e a maior de todas. Cardapio: ${depois.join(' | ')}`,
+    ).toBe(depois.length - 1);
+  });
+
+  test('ordem invalida e recusada, e nao vira 0 em silencio', async ({ page }) => {
+    await logarStaff(page, EMAIL_ADMIN);
+    await expect(page.getByRole('heading', { name: 'Cardapio' })).toBeVisible();
+
+    const categoria = unico('Ordem');
+    await page.getByLabel('Nova categoria').fill(categoria);
+    await page.getByRole('button', { name: /criar categoria/i }).click();
+    const secao = page.locator('section').filter({ hasText: categoria });
+    await expect(secao).toBeVisible();
+
+    // `exact`: sem isto o label casa por substring e pega tambem o botao
+    // "Salvar Ordem da categoria X".
+    const campo = secao.getByLabel(`Ordem da categoria ${categoria}`, { exact: true });
+    await campo.fill('5');
+    await secao.getByRole('button', { name: `Salvar Ordem da categoria ${categoria}` }).click();
+    await expect
+      .poll(async () => (await prisma.categoria.findFirst({ where: { nome: categoria } }))?.ordem)
+      .toBe(5);
+
+    // Campo apagado: `Number('')` e 0, e 0 e o TOPO do cardapio. Sem o teste de
+    // vazio, apagar sem querer mandaria a categoria para cima de tudo.
+    await campo.fill('');
+    await secao.getByRole('button', { name: `Salvar Ordem da categoria ${categoria}` }).click();
+    await expect(secao.getByRole('alert')).toContainText(/inteiro/i);
+
+    await campo.fill('1,5');
+    await secao.getByRole('button', { name: `Salvar Ordem da categoria ${categoria}` }).click();
+    await expect(secao.getByRole('alert')).toContainText(/inteiro/i);
+
+    // Nada disso pode ter escrito no banco: continua 5.
+    expect(
+      (await prisma.categoria.findFirst({ where: { nome: categoria } }))?.ordem,
+      'uma ordem invalida chegou a gravar',
+    ).toBe(5);
+  });
+
   test('preco com ponto de milhar e recusado, nao adivinhado', async ({ page }) => {
     await logarStaff(page, EMAIL_ADMIN);
     await expect(page.getByRole('heading', { name: 'Cardapio' })).toBeVisible();

@@ -13,9 +13,30 @@ import { defineConfig } from 'vite';
 const ALVO_API = process.env.API_ALVO ?? 'http://localhost:3333';
 const PORTA = Number(process.env.WEB_PORT ?? 5173);
 
+/**
+ * `WEB_HOST=0.0.0.0` publica o dev-server na rede local.
+ *
+ * Existe para uma coisa so: por um celular DE VERDADE no fluxo. O QR aponta para
+ * `APP_PUBLIC_URL` (ver scripts/gerar-qr.ts), e um celular nao alcanca o
+ * `localhost` do seu notebook. O proxy daqui e quem fala com a API, entao basta
+ * esta porta ser alcancavel.
+ *
+ * Default `localhost` DE PROPOSITO: 0.0.0.0 no wi-fi de um cafe publica a tela
+ * do caixa e a do admin para a rede inteira. Opt-in por comando, nao um default
+ * que alguem herda sem saber:
+ *
+ *   WEB_HOST=0.0.0.0 npm run dev
+ *
+ * NAO confunda com a API: `server.ts` ja escuta em 0.0.0.0:3333 por conta
+ * propria — verificado, ela responde no IP da rede sem passar por aqui. Este
+ * flag muda o Vite e so.
+ */
+const HOST = process.env.WEB_HOST ?? 'localhost';
+
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: HOST,
     port: PORTA,
     // Falhar alto: se a porta estiver ocupada, o Vite pularia para a proxima e
     // o E2E testaria silenciosamente o servidor de dev — com o banco de dev.

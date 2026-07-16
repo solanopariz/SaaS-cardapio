@@ -3,8 +3,8 @@
 Pedidos por QR Code na mesa, painel de cozinha em tempo real, fechamento no caixa.
 
 > **Estado:** compila, migra, roda. Testado em Node 22.11 / Postgres 16.
-> `npm test` verde: 100 testes (31 em `shared`, 69 de integração no `api`), mais
-> 23 E2E em `npm run test:e2e`.
+> `npm test` verde: 103 testes (31 em `shared`, 72 de integração no `api`), mais
+> 25 E2E em `npm run test:e2e`.
 > As 5 invariantes SQL da migration 002 foram atacadas direto no banco, por fora
 > da aplicação, e todas rejeitam. O isolamento de rooms do socket foi verificado
 > com conexões reais — e o teste foi validado reintroduzindo a falha, para provar
@@ -387,8 +387,19 @@ Alternativas descartadas, pra não serem redescobertas:
         vez por categoria semeada antes de "passar sozinho" na quinta. Corrigido
         com `setval` no fim do seed. Só apareceu porque o E2E roda o seed de
         verdade — a integração sobe banco vazio, que não tem com o que colidir.
-- [ ] Ordenação (`ordem`) e imagem de produto na tela de admin: os campos existem
-      no schema e na API, a tela ainda não os edita.
+- [x] ~~Ordenação (`ordem`) na tela de admin~~ — e "a tela não edita" escondia dois
+      bugs, achados rodando. `ordem` é `@default(0)` e o seed usa 1..4: **toda
+      categoria criada pelo painel nascia acima da Padaria** no celular do
+      cliente, e o dono não tinha como corrigir. Pior, o `/menu` era a única das
+      quatro consultas **sem desempate** — com as categorias do painel todas
+      empatadas em 0, o Postgres devolvia a ordem que quisesse, e um `UPDATE`
+      reescreve a tupla no fim do heap: **renomear uma categoria reordenava o
+      cardápio do cliente** (`Antes: 15,12,14 | Depois: 14,12,15`). Mesma forma da
+      `categoria.ativa`: o default era inofensivo enquanto nada criava categoria
+      — o painel é que tornou o caminho alcançável. Corrigido com desempate por
+      `id` no `/menu` e o campo `ordem` na tela. O default 0 (item novo nasce no
+      topo) ficou, agora com saída e documentado na própria tela.
+- [ ] `imagemUrl` na tela de admin: existe no schema e na API, a tela não edita.
 - [x] ~~Campo de valor recebido em dinheiro no caixa (hoje assume valor exato)~~ —
       `valorRecebidoCentavos` e o cálculo de troco já existiam no `fecharComanda`;
       o que faltava era a **tela**, e a falta não era inofensiva: a `CaixaPage`

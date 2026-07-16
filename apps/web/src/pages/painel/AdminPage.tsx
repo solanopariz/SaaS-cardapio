@@ -9,12 +9,14 @@ interface ProdutoAdmin {
   nome: string;
   precoCentavos: number;
   disponivel: boolean;
+  ordem: number;
 }
 
 interface CategoriaAdmin {
   id: number;
   nome: string;
   ativa: boolean;
+  ordem: number;
   produtos: ProdutoAdmin[];
 }
 
@@ -74,6 +76,12 @@ export function AdminPage() {
           comandas antigas continua intacto. Mudar o preco nao mexe em comanda ja aberta.
         </small>
       </p>
+      <p>
+        <small>
+          A <strong>ordem</strong> e a posicao no celular do cliente: menor primeiro. Item
+          novo nasce em 0, ou seja, no topo — ajuste aqui depois de criar.
+        </small>
+      </p>
 
       <form
         onSubmit={(e: FormEvent) => {
@@ -106,6 +114,13 @@ export function AdminPage() {
           >
             {c.ativa ? 'Tirar categoria do cardapio' : 'Voltar categoria ao cardapio'}
           </button>
+
+          <CampoOrdem
+            rotulo={`Ordem da categoria ${c.nome}`}
+            valor={c.ordem}
+            salvando={editarCategoria.isPending}
+            onSalvar={(ordem) => editarCategoria.mutate({ id: c.id, ordem })}
+          />
 
           {c.produtos.length === 0 && <p><small>Sem produtos.</small></p>}
 
@@ -174,8 +189,70 @@ function LinhaProduto({
       >
         {produto.disponivel ? 'Marcar esgotado' : 'Voltar ao cardapio'}
       </button>
+      <CampoOrdem
+        rotulo={`Ordem de ${produto.nome}`}
+        valor={produto.ordem}
+        salvando={salvando}
+        onSalvar={(ordem) => onSalvar({ ordem })}
+      />
       {erro && <small role="alert">{erro}</small>}
     </li>
+  );
+}
+
+/**
+ * Um so campo para categoria e produto: os dois tem `ordem` e as duas telas
+ * erravam do mesmo jeito. Salva no blur, como o campo de preco ao lado.
+ *
+ * `ordem` e inteiro nao-negativo no schema (`z.number().int().nonnegative()`),
+ * entao um texto vazio ou "1,5" tem que morrer AQUI — mandar e deixar o Zod
+ * devolver 400 daria "Nao foi possivel" sem dizer o que fazer.
+ */
+function CampoOrdem({
+  rotulo,
+  valor,
+  salvando,
+  onSalvar,
+}: {
+  rotulo: string;
+  valor: number;
+  salvando: boolean;
+  onSalvar: (ordem: number) => void;
+}) {
+  const [texto, setTexto] = useState(String(valor));
+  const [erro, setErro] = useState<string | null>(null);
+
+  const salvar = () => {
+    const t = texto.trim();
+    const n = Number(t);
+    // `Number('')` e 0 e `Number(' ')` tambem: sem o teste de vazio, apagar o
+    // campo mandaria o item para o topo do cardapio em silencio.
+    if (t === '' || !Number.isInteger(n) || n < 0) {
+      setErro('Ordem: numero inteiro, 0 ou maior.');
+      return;
+    }
+    setErro(null);
+    if (n !== valor) onSalvar(n);
+  };
+
+  return (
+    <>
+      <input
+        aria-label={rotulo}
+        inputMode="numeric"
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        onBlur={salvar}
+      />
+      {/* `aria-label` distinto: categoria e produto usam este mesmo campo dentro
+          da MESMA <section>, e dois botoes "Salvar ordem" irmaos deixariam o
+          seletor ambiguo — o vizinho do `nth(4)` que ja fez um teste procurar o
+          produto errado. */}
+      <button onClick={salvar} disabled={salvando} aria-label={`Salvar ${rotulo}`}>
+        Salvar ordem
+      </button>
+      {erro && <small role="alert">{erro}</small>}
+    </>
   );
 }
 

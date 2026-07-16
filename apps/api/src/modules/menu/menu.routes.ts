@@ -15,7 +15,13 @@ export async function menuRoutes(app: FastifyInstance): Promise<void> {
   app.get('/menu', async (req, reply) => {
     const categorias = await prisma.categoria.findMany({
       where: { ativa: true },
-      orderBy: { ordem: 'asc' },
+      // O desempate por `id` NAO e decorativo. `ordem` e `@default(0)`, entao
+      // toda categoria criada pelo painel empata com as outras — e `ORDER BY`
+      // sem desempate deixa a ordem a criterio do Postgres. Um UPDATE reescreve
+      // a tupla no fim do heap: RENOMEAR uma categoria reordenava o cardapio do
+      // cliente. As outras tres consultas do projeto ja desempatavam; so esta,
+      // a que o cliente ve, tinha ficado sem.
+      orderBy: [{ ordem: 'asc' }, { id: 'asc' }],
       include: {
         produtos: {
           where: { disponivel: true },
