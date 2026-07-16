@@ -219,7 +219,14 @@ describe('isolamento de rooms', () => {
 });
 
 describe('rooms de staff', () => {
-  it('COZINHA recebe pedido:novo, CAIXA nao', async () => {
+  /**
+   * O caixa TAMBEM recebe pedido:novo. Nao por interesse — por dinheiro: a
+   * `CaixaPage` tem `staleTime: Infinity` e so atualiza o total do grid quando
+   * este evento chega. Enquanto ele ia so para a cozinha, o total ficava
+   * congelado o servico inteiro (medido no navegador: R$ 65,70 na tela contra
+   * R$ 69,70 no banco, corrigindo so no F5).
+   */
+  it('pedido:novo vai para COZINHA e CAIXA', async () => {
     const u = await amb.prisma.usuario.create({
       data: { nome: 'C', email: `c${proximaMesa++}@t`, senhaHash: 'x', role: 'COZINHA' },
     });
@@ -233,8 +240,62 @@ describe('rooms de staff', () => {
     const { emitirPedidoNovo } = await import('../../src/realtime/emit.js');
     emitirPedidoNovo(pedido(1));
 
-    expect(await esperar(cozinha, 'pedido:novo')).not.toBeNull();
-    expect(await esperar(caixa, 'pedido:novo')).toBeNull();
+    const [naCozinha, noCaixa] = await Promise.all([
+      esperar(cozinha, 'pedido:novo'),
+      esperar(caixa, 'pedido:novo'),
+    ]);
+
+    expect(naCozinha, 'a cozinha precisa produzir').not.toBeNull();
+    expect(noCaixa, 'sem isto o total do grid do caixa congela').not.toBeNull();
+  });
+
+  /**
+   * O discriminante. Se a regra fosse "o caixa recebe tudo de pedido", este
+   * teste ficaria vermelho — e o painel levaria uma enxurrada de eventos que
+   * nao mudam numero nenhum.
+   */
+  it('pedido:status comum NAO vai para o caixa (nao mexe em dinheiro)', async () => {
+    const u = await amb.prisma.usuario.create({
+      data: { nome: 'C', email: `c${proximaMesa++}@t`, senhaHash: 'x', role: 'COZINHA' },
+    });
+    const v = await amb.prisma.usuario.create({
+      data: { nome: 'X', email: `x${proximaMesa++}@t`, senhaHash: 'x', role: 'CAIXA' },
+    });
+    const cozinha = await conectarCom(amb.tokenStaff(u.id, 'COZINHA'));
+    const caixa = await conectarCom(amb.tokenStaff(v.id, 'CAIXA'));
+
+    const { emitirPedidoStatus } = await import('../../src/realtime/emit.js');
+    emitirPedidoStatus({ id: 1, comandaId: 1, status: 'EM_PREPARO' });
+
+    const [naCozinha, noCaixa] = await Promise.all([
+      esperar(cozinha, 'pedido:status'),
+      esperar(caixa, 'pedido:status'),
+    ]);
+
+    expect(naCozinha, 'controle: a cozinha TEM que receber').not.toBeNull();
+    // RECEBIDO -> EM_PREPARO nao muda o total. O caixa nao tem o que fazer.
+    expect(noCaixa).toBeNull();
+  });
+
+  it('cancelamento vai para o caixa: derruba o total', async () => {
+    const v = await amb.prisma.usuario.create({
+      data: { nome: 'X', email: `x${proximaMesa++}@t`, senhaHash: 'x', role: 'CAIXA' },
+    });
+    const caixa = await conectarCom(amb.tokenStaff(v.id, 'CAIXA'));
+
+    const { emitirItemCancelado, emitirPedidoCancelado } = await import('../../src/realtime/emit.js');
+
+    emitirItemCancelado({ itemId: 1, pedidoId: 1, comandaId: 1, pedidoCancelado: false });
+    expect(
+      await esperar(caixa, 'item:cancelado'),
+      'estorno de item muda o total do grid',
+    ).not.toBeNull();
+
+    emitirPedidoCancelado({ id: 1, comandaId: 1, status: 'CANCELADO' });
+    expect(
+      await esperar(caixa, 'pedido:cancelado'),
+      'cancelar o pedido inteiro tambem',
+    ).not.toBeNull();
   });
 
   it('CAIXA recebe conta:solicitada, COZINHA nao', async () => {

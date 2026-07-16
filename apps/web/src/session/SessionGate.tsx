@@ -34,7 +34,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
 
   // Guardamos m/k em estado no primeiro render, porque vamos apagar a URL logo
   // em seguida e ainda precisamos deles para o join.
-  const [credencial] = useState(() =>
+  const [credencial, setCredencial] = useState(() =>
     mesaUrl && chaveUrl ? { mesa: Number(mesaUrl), k: chaveUrl } : null,
   );
 
@@ -45,7 +45,34 @@ export function SessionGate({ children }: { children: ReactNode }) {
 
   if (sessao) return <>{children}</>;
 
-  if (credencial) return <TelaApelido credencial={credencial} aoEntrar={entrar} />;
+  if (credencial) {
+    return (
+      <TelaApelido
+        credencial={credencial}
+        aoEntrar={(s) => {
+          entrar(s);
+          /**
+           * A credencial MORRE aqui. O trabalho dela era um so: sobreviver ao
+           * passo 4, que apaga a URL entre o scan e o join. Cumprido isso, ela
+           * nao tem mais dono.
+           *
+           * Enquanto ela sobrevivia ao fim da sessao, o caixa fechar a conta
+           * devolvia o cliente para "Mesa 14 — como podemos te chamar?" em vez
+           * da tela de escanear. Ou seja: o celular continuava amarrado a mesa
+           * depois de o cliente pagar e ir embora. A mesa e limpa, senta outra
+           * pessoa, e a aba esquecida no bolso abre a comanda dela com um toque.
+           *
+           * O `emit.ts` promete que "a mesa se auto-libera no dispositivo".
+           * Sem esta linha, ela nao se libera.
+           *
+           * Pedir de novo apos o fechamento exige escanear de novo — o adesivo
+           * esta na mesa, e um gesto.
+           */
+          setCredencial(null);
+        }}
+      />
+    );
+  }
 
   return <TelaEscaneie />;
 }

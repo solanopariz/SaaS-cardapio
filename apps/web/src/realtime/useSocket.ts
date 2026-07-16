@@ -58,6 +58,11 @@ export function useSocket(token: string | null, aoFecharComanda?: () => void): v
 
     socket.on(EV.PEDIDO_CANCELADO, (p: PedidoStatusPayload) => {
       aplicarStatus(qc, p);
+      // Cancelar DERRUBA o total — diferente do pedido:status comum, que so
+      // move RECEBIDO -> EM_PREPARO e nao mexe em dinheiro. Por isso a
+      // invalidacao mora aqui e nao dentro de `aplicarStatus`.
+      void qc.invalidateQueries({ queryKey: QK.minhaComanda });
+      void qc.invalidateQueries({ queryKey: QK.mesasCaixa });
     });
 
     socket.on(EV.ITEM_CANCELADO, (p: ItemCanceladoPayload) => {
@@ -73,9 +78,11 @@ export function useSocket(token: string | null, aoFecharComanda?: () => void): v
             : pedido,
         ),
       );
-      // O total da comanda mudou. Aqui invalidar E o certo: o total e derivado
-      // no servidor e o payload do evento nao o carrega.
+      // O total mudou. Aqui invalidar E o certo: o total e derivado no servidor
+      // e o payload do evento nao o carrega. Vale para os DOIS totais — o da
+      // comanda no celular e o do grid do caixa.
       void qc.invalidateQueries({ queryKey: QK.minhaComanda });
+      void qc.invalidateQueries({ queryKey: QK.mesasCaixa });
     });
 
     socket.on(EV.COMANDA_FECHADA, (_p: ComandaFechadaPayload) => {

@@ -66,9 +66,24 @@ function emitir(evento: string, entregar: (io: TypedServer) => void): void {
   }
 }
 
-/** Pedido novo: so a cozinha precisa. O cliente ja tem a resposta do POST. */
+/**
+ * Pedido novo: a cozinha para produzir, o caixa para o total do grid.
+ *
+ * O cliente NAO entra aqui: ele ja tem a resposta do POST.
+ *
+ * O caixa entrou depois de o painel dele ser dirigido no navegador. Antes,
+ * `pedido:novo` ia so para a cozinha — mas a `CaixaPage` tem
+ * `staleTime: Infinity` ("o socket empurra") e o `useSocket` invalida as mesas
+ * ao receber este evento, com o comentario "e barato, so o caixa escuta".
+ * O caixa nao escutava. O total do grid ficava congelado o servico inteiro:
+ * medido em R$ 65,70 enquanto o banco ja dizia R$ 69,70, e so um F5 corrigia.
+ *
+ * Nao era risco de dinheiro (o dialogo de fechamento refaz o fetch, e o
+ * `fecharComanda` recalcula no servidor) — era o numero que o caixa olha de
+ * relance estar errado o tempo todo.
+ */
 export function emitirPedidoNovo(p: PedidoPayload): void {
-  emitir(EV.PEDIDO_NOVO, (io) => io.to(ROOM_COZINHA).emit(EV.PEDIDO_NOVO, p));
+  emitir(EV.PEDIDO_NOVO, (io) => io.to([ROOM_COZINHA, ROOM_CAIXA]).emit(EV.PEDIDO_NOVO, p));
 }
 
 /** Status mudou: a cozinha atualiza o card, o cliente ve "seu pedido esta pronto". */
@@ -78,15 +93,24 @@ export function emitirPedidoStatus(p: PedidoStatusPayload): void {
   );
 }
 
+/**
+ * Cancelamento DERRUBA o total. Por isso o caixa entra aqui e nao no
+ * `pedido:status` comum: RECEBIDO -> EM_PREPARO nao mexe em dinheiro nenhum, e
+ * mandar isso ao caixa seria trafego puro.
+ *
+ * A regra que decide quem recebe o que nao e "quem tem interesse" — e "o que
+ * muda o numero na tela de quem".
+ */
 export function emitirPedidoCancelado(p: PedidoStatusPayload): void {
   emitir(EV.PEDIDO_CANCELADO, (io) =>
-    io.to([ROOM_COZINHA, roomComanda(p.comandaId)]).emit(EV.PEDIDO_CANCELADO, p),
+    io.to([ROOM_COZINHA, ROOM_CAIXA, roomComanda(p.comandaId)]).emit(EV.PEDIDO_CANCELADO, p),
   );
 }
 
+/** Idem: estorno de item muda o total do grid do caixa. */
 export function emitirItemCancelado(p: ItemCanceladoPayload): void {
   emitir(EV.ITEM_CANCELADO, (io) =>
-    io.to([ROOM_COZINHA, roomComanda(p.comandaId)]).emit(EV.ITEM_CANCELADO, p),
+    io.to([ROOM_COZINHA, ROOM_CAIXA, roomComanda(p.comandaId)]).emit(EV.ITEM_CANCELADO, p),
   );
 }
 

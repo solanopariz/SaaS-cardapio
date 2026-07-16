@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { SENHA_SEED, USUARIOS_SEED } from './seed-dados.js';
 
 const prisma = new PrismaClient();
 
@@ -50,14 +51,10 @@ const CARDAPIO = [
 ];
 
 async function main(): Promise<void> {
-  const senhaHash = await bcrypt.hash('trocar123', 10);
+  const senhaHash = await bcrypt.hash(SENHA_SEED, 10);
 
   await prisma.usuario.createMany({
-    data: [
-      { nome: 'Administrador', email: 'admin@local', senhaHash, role: 'ADMIN' },
-      { nome: 'Cozinha', email: 'cozinha@local', senhaHash, role: 'COZINHA' },
-      { nome: 'Caixa', email: 'caixa@local', senhaHash, role: 'CAIXA' },
-    ],
+    data: USUARIOS_SEED.map((u) => ({ ...u, senhaHash })),
     skipDuplicates: true,
   });
 
@@ -95,7 +92,7 @@ async function main(): Promise<void> {
   const mesas = await prisma.mesa.count();
   const produtos = await prisma.produto.count();
   console.log(`Seed pronto: ${mesas} mesas, ${produtos} produtos.`);
-  console.log('Logins: admin@local / cozinha@local / caixa@local — senha: trocar123');
+  console.log(`Logins: ${USUARIOS_SEED.map((u) => u.email).join(' / ')} — senha: ${SENHA_SEED}`);
   console.log('Rode `npm run qr` para gerar os QR Codes das mesas.');
 }
 

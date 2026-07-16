@@ -14,11 +14,15 @@
     "dev:web": "npm run dev --workspace=apps/web",
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "//test:e2e": "Sobe a stack inteira em portas e banco PROPRIOS (3399/5199, cardapio_e2e). Nao toca no seu `npm run dev` nem no banco de dev. Precisa de Docker.",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
     "db:migrate": "npm run db:migrate --workspace=apps/api",
     "db:seed": "npm run db:seed --workspace=apps/api",
     "qr": "npm run qr --workspace=apps/api"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "concurrently": "^8.2.2"
   },
   "engines": {

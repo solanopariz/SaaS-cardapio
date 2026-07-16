@@ -3,23 +3,27 @@
 Pedidos por QR Code na mesa, painel de cozinha em tempo real, fechamento no caixa.
 
 > **Estado:** compila, migra, roda. Testado em Node 22.11 / Postgres 16.
-> `npm test` verde: 58 testes (23 em `shared`, 35 de integração no `api`).
+> `npm test` verde: 69 testes (23 em `shared`, 46 de integração no `api`).
 > As 5 invariantes SQL da migration 002 foram atacadas direto no banco, por fora
 > da aplicação, e todas rejeitam. O isolamento de rooms do socket foi verificado
 > com conexões reais — e o teste foi validado reintroduzindo a falha, para provar
 > que ele fica vermelho.
 >
-> Rodar o código achou **cinco bugs que compilavam bem**: um 500 no boot
-> (`listen` antes de `criarIo`), comida de graça no fechamento concorrente, 500
-> em pedidos simultâneos na mesma mesa, um item sumindo em silêncio no retry da
-> chave de idempotência, e um loop fechado na tela do cliente. Os cinco estão
-> corrigidos.
+> Rodar o código achou **oito bugs que compilavam bem**:
 >
-> Nenhum deles era erro de tipo. O compilador esteve verde o tempo todo.
+> | Bug | Sintoma |
+> |---|---|
+> | `listen` antes de `criarIo` | 500 numa comanda que **foi** criada |
+> | Pedido em voo no fechamento | conta fechada por R$ 15 com R$ 30 dentro |
+> | Colisão de `seq` | 3 de 4 amigos pedindo junto tomavam erro interno |
+> | Chave de idempotência sem conteúdo | item sumia sem erro |
+> | Loop do 409 na tela | "toque de novo" → 409 → para sempre |
+> | **`@local` no seed** | **ninguém nunca conseguiu logar nos painéis** |
+> | `pedido:novo` não ia ao caixa | total do grid congelado o serviço inteiro |
+> | `credencial` sobrevivia à sessão | celular seguia amarrado à mesa após pagar |
 >
-> **O que ainda não foi exercido:** o painel da cozinha e o do caixa — só o
-> fluxo do cliente foi dirigido no navegador. E nada versionado guarda o front:
-> os 58 testes param no backend. Ver [O que falta](#o-que-falta).
+> Nenhum era erro de tipo. O compilador esteve verde durante os oito. Cada um
+> nasceu da **costura** entre dois arquivos individualmente corretos.
 
 ## Pré-requisitos
 
@@ -44,17 +48,31 @@ npm run qr                    # gera qrcodes/mesa-01.png ...
 npm run dev                   # API :3333, web :5173
 ```
 
-Logins do seed: `admin@local`, `cozinha@local`, `caixa@local` — senha `trocar123`.
+Logins do seed: `admin@cardapio.local`, `cozinha@cardapio.local`,
+`caixa@cardapio.local` — senha `trocar123`.
+
+> O domínio **precisa** de um ponto. `loginSchema` valida com `z.string().email()`,
+> que exige TLD: `@local` era rejeitado com **400** antes de a senha ser
+> conferida, e os painéis da cozinha e do caixa nunca abriram para ninguém.
+> [`test/auth.login.test.ts`](apps/api/test/auth.login.test.ts) roda o seed de
+> verdade e loga com estas credenciais — se elas quebrarem, o CI reclama.
 
 Cliente: abra `qrcodes/mesa-01.png`, escaneie, ou cole a URL que o `npm run qr` imprimiu.
 
 ## Testes
 
 ```bash
-npm test                          # tudo
+npm test                          # unitários + integração
 npm test --workspace=packages/shared   # puros, sem Docker
 npm test --workspace=apps/api          # integração: PRECISA de Docker rodando
+npm run test:e2e                       # Postgres → API → Vite → Chromium
+npm run test:e2e:ui                    # o mesmo, com o inspetor do Playwright
 ```
+
+O E2E sobe a stack inteira em **banco e portas próprios** (`cardapio_e2e`,
+`:3399`/`:5199`). Ele não toca no seu `npm run dev` nem no banco de dev — sem
+isso, rodá-lo derrubaria o seu banco e trocaria o `qr_secret` de todas as mesas,
+invalidando qualquer QR já impresso.
 
 O `api` usa Testcontainers: cada arquivo sobe um `postgres:16` descartável e
 aplica as migrations nele. Não dá para trocar por sqlite ou mock — o que está sob
@@ -220,7 +238,27 @@ via `setQueryData` — **não** `invalidateQueries`, senão 40 pedidos virariam 
 refetches na hora do pico. No `reconnect`, aí sim, invalida tudo: os eventos
 perdidos durante a queda não existem e nenhuma fila os recupera.
 
-Ver [`apps/web/src/realtime/useSocket.ts`](apps/web/src/realtime/useSocket.ts).
+Verificado no navegador: cliente pede → a cozinha vê em **~250ms sem refresh**;
+a cozinha marca `EM_PREPARO` → o celular do cliente vê em **~250ms**.
+
+**Quem recebe o quê é decidido pelo dinheiro, não pelo interesse.** O caixa
+recebe `pedido:novo`, `item:cancelado` e `pedido:cancelado` — os três que mexem
+no total do grid. Não recebe `pedido:status`: `RECEBIDO → EM_PREPARO` não muda
+número nenhum na tela dele, e mandar seria tráfego puro.
+
+Isso não estava assim. `pedido:novo` ia só para a cozinha ("só a cozinha
+precisa"), enquanto o `useSocket` invalidava as mesas do caixa ao recebê-lo
+("é barato, **só o caixa escuta**") e a `CaixaPage` desligava o refetch com
+`staleTime: Infinity` ("o socket empurra"). Três decisões defensáveis; juntas,
+o total do grid do caixa ficava **congelado o serviço inteiro**. Medido no
+navegador: R$ 65,70 na tela contra R$ 69,70 no banco, só corrigindo no F5.
+
+Não era risco de dinheiro — o diálogo de fechamento refaz o fetch e o
+`fecharComanda` recalcula no servidor. Era o número que o caixa olha de relance
+estar errado o tempo todo.
+
+Ver [`apps/web/src/realtime/useSocket.ts`](apps/web/src/realtime/useSocket.ts) e
+[`test/realtime/rooms.test.ts`](apps/api/test/realtime/rooms.test.ts).
 
 ## Estrutura
 
@@ -302,12 +340,14 @@ Alternativas descartadas, pra não serem redescobertas:
       Chromium de verdade: escanear → apelido → join → cardápio → carrinho →
       pedido. Funcionou de primeira, sem erro de console. A URL perde o `?k=`
       como prometido. **Mas achou o loop do 409** (acima) — corrigido.
-- [ ] **E2E Playwright versionado.** A verificação acima foi feita com um script
-      descartável. Nada no repo guarda o `travado` do MenuPage: remover uma linha
-      traz o loop de volta e nenhum teste reclama. O repro que achou o bug
-      (interceptar o POST, deixar chegar no servidor, abortar a resposta) é a
-      base pronta.
-- [ ] Painel da cozinha e do caixa: só o fluxo do cliente foi dirigido.
+- [x] ~~E2E Playwright versionado~~ — [`e2e/`](e2e/), 14 testes em ~19s.
+      Guarda o `travado` do MenuPage (verificado removendo a linha: fica
+      vermelho), a limpeza do `?k=` da URL, o F5, o tempo real nos dois painéis
+      e o fechamento. Achou o `credencial` que sobrevivia ao fim da sessão.
+- [x] ~~Painel da cozinha e do caixa: só o fluxo do cliente foi dirigido.~~ —
+      dirigidos. Achou que **ninguém conseguia logar** (`@local` sem TLD) e que o
+      total do grid do caixa ficava congelado. O tempo real funciona: pedido
+      aparece na cozinha em ~250ms, `EM_PREPARO` volta ao celular em ~250ms.
 - [ ] E2E Playwright do fluxo inteiro, com três browsers em paralelo
 - [ ] CRUD de admin (produtos, categorias, mesas)
 - [x] ~~Campo de valor recebido em dinheiro no caixa (hoje assume valor exato)~~ —

@@ -15,6 +15,12 @@ qrcodes/
 # Prisma gera o client aqui (postinstall).
 node_modules/.prisma/
 
+# Playwright: relatorios e traces de rodadas locais.
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
 npm-debug.log*
 yarn-error.log*
 .DS_Store

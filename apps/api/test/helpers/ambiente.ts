@@ -24,7 +24,7 @@ export interface Ambiente {
  * (`WHERE status = 'ABERTA'`) — sqlite nem tem isso, e um mock so devolveria
  * a resposta que o autor do mock ja acreditava.
  */
-export async function subirAmbiente(): Promise<Ambiente> {
+export async function subirAmbiente(opcoes: { semear?: boolean } = {}): Promise<Ambiente> {
   const container = await new PostgreSqlContainer('postgres:16').start();
 
   // connection_limit alto de proposito: com pool pequeno as transacoes
@@ -39,6 +39,18 @@ export async function subirAmbiente(): Promise<Ambiente> {
     stdio: 'pipe',
     shell: true,
   });
+
+  // Roda o seed DE VERDADE, como subprocesso, exatamente como `npm run db:seed`.
+  // Nao reimplementar o seed no teste: um seed imitado prova que a imitacao
+  // funciona. Foi assim que `cozinha@local` sobreviveu — o login nunca rodou.
+  if (opcoes.semear) {
+    execFileSync('npx', ['tsx', 'prisma/seed.ts'], {
+      cwd: RAIZ_API,
+      env: { ...process.env, DATABASE_URL: url },
+      stdio: 'pipe',
+      shell: true,
+    });
+  }
 
   // env.ts valida process.env NA IMPORTACAO e chama process.exit(1) se faltar
   // algo — o que mataria o worker do vitest sem explicacao. Por isso todo o
