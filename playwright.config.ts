@@ -24,6 +24,21 @@ process.loadEnvFile('.env'); // Node 22. Sem dependencia de dotenv.
 const PORTA_API = 3399;
 const PORTA_WEB = 5199;
 
+/**
+ * `E2E_HOST=192.168.0.10 npm run test:e2e` roda a suite INTEIRA pela rede, na
+ * origem que o celular do cliente usa de verdade.
+ *
+ * Isto nao e sobre a rede: e sobre SECURE CONTEXT. `localhost` e secure context
+ * por definicao, e a suite inteira sempre rodou nele — por isso os 128 testes
+ * passavam verdes enquanto `crypto.randomUUID` (que so existe em secure
+ * context) estourava no primeiro celular real, antes de qualquer requisicao
+ * sair. Ver `e2e/origem-insegura.spec.ts` e `packages/shared/src/uuid.ts`.
+ *
+ * Opt-in porque o IP muda de rede para rede e nao existe em CI. O default
+ * continua `localhost`.
+ */
+const HOST_WEB = process.env.E2E_HOST ?? 'localhost';
+
 function bancoE2E(): string {
   const u = new URL(process.env.DATABASE_URL ?? '');
   u.pathname = '/cardapio_e2e';
@@ -31,9 +46,13 @@ function bancoE2E(): string {
 }
 
 export const E2E = {
-  urlWeb: `http://localhost:${PORTA_WEB}`,
+  urlWeb: `http://${HOST_WEB}:${PORTA_WEB}`,
+  // A API continua em localhost: quem fala com ela e o proxy do Vite, que roda
+  // nesta mesma maquina. So a porta do Vite precisa ser alcancavel de fora.
   urlApi: `http://localhost:${PORTA_API}`,
   databaseUrl: bancoE2E(),
+  /** Verdadeiro quando a suite esta rodando fora de secure context. */
+  origemInsegura: HOST_WEB !== 'localhost',
 };
 
 const envApi = {
@@ -78,7 +97,13 @@ export default defineConfig({
     {
       command: 'npm run dev:web',
       url: E2E.urlWeb,
-      env: { ...process.env, WEB_PORT: String(PORTA_WEB), API_ALVO: E2E.urlApi },
+      env: {
+        ...process.env,
+        WEB_PORT: String(PORTA_WEB),
+        API_ALVO: E2E.urlApi,
+        // So expoe na rede quando o teste pediu por isso.
+        WEB_HOST: E2E.origemInsegura ? '0.0.0.0' : 'localhost',
+      },
       reuseExistingServer: false,
       stdout: 'pipe',
       timeout: 120_000,

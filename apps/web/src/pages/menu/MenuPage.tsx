@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { formatarBRL, type PedidoPayload } from '@cardapio/shared';
+import { formatarBRL, uuidV4, type PedidoPayload } from '@cardapio/shared';
 import { api, ApiError, ehComandaFechada } from '../../api/client.js';
 import { QK, useSocket } from '../../realtime/useSocket.js';
 import { useComanda } from '../../session/ComandaContext.jsx';
@@ -72,7 +72,10 @@ export function MenuPage() {
 
   const enviarPedido = useMutation({
     mutationFn: (itens: ItemCarrinho[]) => {
-      chaveEnvio.current ??= crypto.randomUUID();
+      // uuidV4: no celular do cliente (origem por IP, sem HTTPS) o
+      // `crypto.randomUUID` nao existe e isto seria um TypeError — o pedido
+      // morreria aqui, antes de virar requisicao.
+      chaveEnvio.current ??= uuidV4();
       return api<PedidoPayload>('/comandas/me/pedidos', {
         method: 'POST',
         token: sessao!.token,

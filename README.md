@@ -3,8 +3,9 @@
 Pedidos por QR Code na mesa, painel de cozinha em tempo real, fechamento no caixa.
 
 > **Estado:** compila, migra, roda. Testado em Node 22.11 / Postgres 16.
-> `npm test` verde: 103 testes (31 em `shared`, 72 de integração no `api`), mais
-> 25 E2E em `npm run test:e2e`.
+> `npm test` verde: 108 testes (36 em `shared`, 72 de integração no `api`), mais
+> 25 E2E em `npm run test:e2e` — e mais 3 que só rodam com `E2E_HOST=<ip>`, na
+> origem insegura que o celular do cliente usa de verdade.
 > As 5 invariantes SQL da migration 002 foram atacadas direto no banco, por fora
 > da aplicação, e todas rejeitam. O isolamento de rooms do socket foi verificado
 > com conexões reais — e o teste foi validado reintroduzindo a falha, para provar
@@ -399,6 +400,26 @@ Alternativas descartadas, pra não serem redescobertas:
       — o painel é que tornou o caminho alcançável. Corrigido com desempate por
       `id` no `/menu` e o campo `ordem` na tela. O default 0 (item novo nasce no
       topo) ficou, agora com saída e documentado na própria tela.
+- [x] ~~`crypto.randomUUID` fora de secure context~~ — **o primeiro celular de
+      verdade não conseguiu entrar**, e nenhum dos 128 testes podia ver.
+      `randomUUID` só existe em secure context (HTTPS ou `localhost`); num
+      celular abrindo `http://192.168.x.x` ele é `undefined`. O `TypeError`
+      estourava dentro do `try` do `SessionGate`, **antes do fetch** — o `catch`
+      genérico mostrava "Não foi possível entrar. Tente de novo." e o log da API
+      ficava vazio. O app acusava a rede de um erro que era dele. A suíte inteira
+      sempre rodou em `localhost`, que é secure context **por definição**: o
+      verde era estrutural, não sorte. Corrigido com `uuidV4()`
+      (`packages/shared/src/uuid.ts`), que cai em `crypto.getRandomValues` — que
+      existe nos dois contextos e continua CSPRNG. Vale para o piloto também: um
+      mini-PC servindo `http://192.168.x.x` na rede do restaurante tem o mesmo
+      problema, só HTTPS devolve o `randomUUID` nativo.
+
+      Contra a recaída: teste em `shared` que **remove** `randomUUID` e prova o
+      fallback (o caminho nativo passaria verde sem nunca executá-lo), e
+      `E2E_HOST=<ip> npm run test:e2e`, que roda a suíte inteira pela rede. O
+      primeiro teste de `e2e/origem-insegura.spec.ts` não testa o app: prova que
+      a rodada está mesmo fora de secure context. Sem ele, `E2E_HOST=localhost`
+      ficaria verde provando nada.
 - [ ] `imagemUrl` na tela de admin: existe no schema e na API, a tela não edita.
 - [x] ~~Campo de valor recebido em dinheiro no caixa (hoje assume valor exato)~~ —
       `valorRecebidoCentavos` e o cálculo de troco já existiam no `fecharComanda`;

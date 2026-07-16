@@ -5,6 +5,8 @@
  * simplesmente ignorada (nao explode em JSON.parse de um formato velho).
  */
 
+import { uuidV4 } from '@cardapio/shared';
+
 const CHAVE_SESSAO = 'comanda_session_v1';
 const CHAVE_DEVICE = 'device_id_v1';
 
@@ -57,7 +59,10 @@ export function limparSessao(): void {
 export function obterDeviceId(): string {
   let id = localStorage.getItem(CHAVE_DEVICE);
   if (!id) {
-    id = crypto.randomUUID();
+    // uuidV4, nao crypto.randomUUID: este codigo roda no celular do cliente, que
+    // abre o app por IP (http://192.168.x.x) e portanto NAO esta em secure
+    // context — la `crypto.randomUUID` e undefined. Ver packages/shared/src/uuid.ts.
+    id = uuidV4();
     localStorage.setItem(CHAVE_DEVICE, id);
   }
   return id;
