@@ -1,0 +1,50 @@
+{
+  "name": "@cardapio/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "//": "O .env vive na raiz do monorepo. Node nao le .env sozinho (--env-file) e o Prisma CLI so procura em ./ e ./prisma — dai o dotenv-cli.",
+  "scripts": {
+    "//postinstall": "Sem isto, @prisma/client e um stub vazio e o clone limpo nao passa no typecheck: Role, PedidoInclude e PrismaClientKnownRequestError nao existem ate o generate rodar. Nao dependa do db:migrate gerar de carona — isso exige um Postgres de pe so para checar tipos.",
+    "postinstall": "prisma generate",
+    "dev": "tsx watch --env-file=../../.env src/server.ts",
+    "build": "tsc",
+    "start": "node --env-file=../../.env dist/server.js",
+    "//test": "Testcontainers: precisa de Docker rodando. Sobe um postgres:16 descartavel por arquivo de teste.",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "dotenv -e ../../.env -- prisma migrate dev",
+    "db:reset": "dotenv -e ../../.env -- prisma migrate reset",
+    "db:seed": "tsx --env-file=../../.env prisma/seed.ts",
+    "qr": "tsx --env-file=../../.env scripts/gerar-qr.ts"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@cardapio/shared": "*",
+    "@fastify/cors": "^9.0.1",
+    "@prisma/client": "^5.19.0",
+    "bcryptjs": "^2.4.3",
+    "fastify": "^4.28.1",
+    "fastify-plugin": "^4.5.1",
+    "jsonwebtoken": "^9.0.2",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.7.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "^12.0.4",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/node": "^20.14.15",
+    "@types/qrcode": "^1.5.5",
+    "dotenv-cli": "^7.4.2",
+    "prisma": "^5.19.0",
+    "socket.io-client": "^4.8.3",
+    "tsx": "^4.17.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

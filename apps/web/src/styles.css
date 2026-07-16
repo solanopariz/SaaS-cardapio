@@ -1,0 +1,121 @@
+/* Estilo minimo. O plano nao pediu design — pediu arquitetura. */
+
+:root {
+  --fg: #1a1a1a;
+  --bg: #fafafa;
+  --linha: #e0e0e0;
+  --acento: #b3541e;
+  --alerta: #c0392b;
+  --ok: #27714a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  line-height: 1.5;
+}
+
+main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.tela-centro {
+  min-height: 100dvh;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  gap: 0.5rem;
+}
+
+input,
+button {
+  font: inherit;
+  padding: 0.6rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid var(--linha);
+}
+
+button {
+  cursor: pointer;
+  background: var(--fg);
+  color: white;
+  border: none;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+ul {
+  list-style: none;
+  padding: 0;
+}
+
+li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--linha);
+}
+
+small {
+  display: block;
+  opacity: 0.65;
+}
+
+[role='alert'] {
+  color: var(--alerta);
+}
+
+/* Painel da cozinha: cards por pedido, cor por status. */
+.grid-pedidos,
+.grid-mesas {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 1rem;
+}
+
+article[data-status] {
+  border: 2px solid var(--linha);
+  border-radius: 8px;
+  padding: 0.9rem;
+  background: white;
+}
+
+article[data-status='RECEBIDO'] {
+  border-color: var(--acento);
+}
+article[data-status='EM_PREPARO'] {
+  border-color: #d4a017;
+}
+article[data-status='PRONTO'] {
+  border-color: var(--ok);
+}
+
+.grid-mesas button {
+  display: grid;
+  gap: 0.25rem;
+  padding: 1rem;
+  background: white;
+  color: var(--fg);
+  border: 2px solid var(--linha);
+}
+
+.grid-mesas button[data-status='AGUARDANDO_FECHAMENTO'] {
+  border-color: var(--alerta);
+  font-weight: 600;
+}
+.grid-mesas button[data-status='OCUPADA'] {
+  border-color: var(--acento);
+}

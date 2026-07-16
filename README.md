@@ -1,0 +1,318 @@
+# Cardápio Digital Integrado
+
+Pedidos por QR Code na mesa, painel de cozinha em tempo real, fechamento no caixa.
+
+> **Estado:** compila, migra, roda. Testado em Node 22.11 / Postgres 16.
+> `npm test` verde: 58 testes (23 em `shared`, 35 de integração no `api`).
+> As 5 invariantes SQL da migration 002 foram atacadas direto no banco, por fora
+> da aplicação, e todas rejeitam. O isolamento de rooms do socket foi verificado
+> com conexões reais — e o teste foi validado reintroduzindo a falha, para provar
+> que ele fica vermelho.
+>
+> Rodar o código achou **cinco bugs que compilavam bem**: um 500 no boot
+> (`listen` antes de `criarIo`), comida de graça no fechamento concorrente, 500
+> em pedidos simultâneos na mesma mesa, um item sumindo em silêncio no retry da
+> chave de idempotência, e um loop fechado na tela do cliente. Os cinco estão
+> corrigidos.
+>
+> Nenhum deles era erro de tipo. O compilador esteve verde o tempo todo.
+>
+> **O que ainda não foi exercido:** o painel da cozinha e o do caixa — só o
+> fluxo do cliente foi dirigido no navegador. E nada versionado guarda o front:
+> os 58 testes param no backend. Ver [O que falta](#o-que-falta).
+
+## Pré-requisitos
+
+```powershell
+winget install OpenJS.NodeJS.LTS        # >= 20.6
+winget install Docker.DockerDesktop     # ou PostgreSQL.PostgreSQL.16
+```
+
+## Subir
+
+```bash
+cp .env.example .env          # e troque os dois JWT_SECRET
+
+# Postgres via Docker:
+docker run -d --name cardapio-db -p 5432:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=cardapio postgres:16
+
+npm install
+npm run db:migrate            # cria as tabelas (001) + invariantes SQL (002)
+npm run db:seed               # 20 mesas, cardápio de exemplo, 3 usuários
+npm run qr                    # gera qrcodes/mesa-01.png ...
+npm run dev                   # API :3333, web :5173
+```
+
+Logins do seed: `admin@local`, `cozinha@local`, `caixa@local` — senha `trocar123`.
+
+Cliente: abra `qrcodes/mesa-01.png`, escaneie, ou cole a URL que o `npm run qr` imprimiu.
+
+## Testes
+
+```bash
+npm test                          # tudo
+npm test --workspace=packages/shared   # puros, sem Docker
+npm test --workspace=apps/api          # integração: PRECISA de Docker rodando
+```
+
+O `api` usa Testcontainers: cada arquivo sobe um `postgres:16` descartável e
+aplica as migrations nele. Não dá para trocar por sqlite ou mock — o que está sob
+teste **é o árbitro do banco**. `uniq_comanda_aberta` é um índice único *parcial*;
+sqlite não tem isso, e um mock só devolveria a resposta que o autor do mock já
+acreditava.
+
+> Ver `prisma:error ... Unique constraint failed` no output de um teste **verde**
+> é esperado: é o Prisma logando o 23505 que o service captura e trata. A ausência
+> dessas linhas significaria que a corrida não colidiu e o teste passou à toa.
+
+**Um teste de corrida que não colide passa e não prova nada.** Por isso
+`sessao.join.test.ts` tem dois: um dispara 12 requests e torce pela colisão
+(pega deadlock, pool esgotado, 500 sob carga); o outro **força** o P2002 segurando
+uma transação não-commitada, e é o único que prova que o retry existe.
+
+**Todo teste de negativa tem um controle positivo ao lado.** Em
+`rooms.test.ts`, afirmar "a mesa A não recebe o evento da mesa B" passaria também
+se o `emit` nunca tivesse saído — e emit que falha não lança, a
+[REGRA 2](#o-cliente-nunca-emite-evento-de-socket) engole em silêncio de
+propósito. Então todo teste que afirma "não chegou" afirma junto que **chegou em
+quem devia**. Sem isso, "isolamento" e "emissor morto" são indistinguíveis.
+
+## Como isto funciona
+
+### O QR Code é uma senha permanente da mesa — e é fraco de propósito
+
+O adesivo impresso carrega `?m=14&k=<16 chars>`. O `k` é o `qr_secret` da mesa,
+gerado uma vez no seed e **nunca rotacionado** — rotacionar exigiria reimprimir o
+adesivo a cada cliente.
+
+Seja honesto sobre o que ele faz: o `k` prova que você **esteve** na mesa, não que
+você **está**. O adesivo é público e imutável. Todo ex-cliente tem o `k` no
+histórico do navegador; todo garçom demitido tem os 20; quem fotografou a mesa tem
+aquele. São 64 bits de entropia defendendo contra o ataque que ninguém vai fazer
+(adivinhar) e zero defesa contra o que é trivial (ler o adesivo).
+
+Então o `k` é **anti-trote casual**, não autorização. Ele para quem chuta URL.
+Não para quem jantou aqui semana passada e colou a URL de casa.
+
+Isso deixa uma impossibilidade no `/join`, e ela não é bug:
+
+|  | amigo chegou atrasado | ex-cliente em casa |
+|---|---|---|
+| `k` | válido | válido |
+| comanda | aberta, existente | aberta, existente |
+| `deviceId` | novo | novo |
+
+São idênticos. Nenhum `if` separa os dois, porque o que os separa — presença
+física *agora* — nunca chega no servidor. O `k` não carrega tempo.
+
+O que segura isso hoje não é criptografia: é que a mesa 14 tem gente sentada nela
+que vê a comanda e fala "eu não pedi isso". Por isso `PedidoItem.participanteId`
+existe, e no *item*, não no pedido. Atribuição é a defesa real. Ver
+[Antes de qualquer piloto](#antes-de-qualquer-piloto).
+
+O que rotaciona é o **JWT de comanda**, emitido no `/join` e morto quando o caixa
+fecha a mesa. É ele que vive no `localStorage` e sobrevive ao F5.
+
+`qrcodes/` está no `.gitignore`: cada PNG contém o segredo de uma mesa.
+
+### O cliente nunca emite evento de socket
+
+Toda mutação é HTTP — transacional, validada, idempotente. O socket é canal de
+leitura. E todo `emit` acontece **depois do COMMIT**: emitir dentro da transação e
+depois dar rollback põe a cozinha a preparar um pedido que não existe.
+
+O corolário só apareceu quando o código rodou pela primeira vez: **se o `emit`
+falha, o request não pode falhar.** Quando o emissor roda, o COMMIT já aconteceu
+— lançar ali devolveria 500 para uma operação que deu certo, e o cliente acharia
+que não tem comanda, tendo. Não há rollback a dar. Então o emit é best-effort:
+loga e engole.
+
+Isso não é tolerância a bug, é a mesma premissa de sempre — o socket não é fonte
+de verdade, e o cliente já se realinha no refetch. Um emit perdido é um evento
+perdido, que é justamente a categoria que o `reconnect` existe para tratar.
+
+Ver [`apps/api/src/realtime/emit.ts`](apps/api/src/realtime/emit.ts) (REGRA 1 e 2)
+e [`test/realtime/emit.test.ts`](apps/api/test/realtime/emit.test.ts).
+
+### O total nunca é armazenado enquanto a comanda está aberta
+
+É derivado de `calcularTotalComanda` sobre `preco_unitario_centavos` — um snapshot
+do preço no momento do pedido. Subir o preço da coxinha não muda a comanda aberta.
+Só o fechamento grava `comandas.total_centavos`, como recibo imutável.
+
+Dinheiro é sempre `INTEGER` em centavos.
+
+### As invariantes vivem no banco, não em `if`
+
+[`002_invariantes/migration.sql`](apps/api/prisma/migrations/002_invariantes/migration.sql):
+
+- `uniq_comanda_aberta` — índice único **parcial**: no máximo uma comanda `ABERTA`
+  por mesa. Dois clientes escaneando no mesmo instante: um vence, o outro anexa.
+  Um `if (mesa.status === 'LIVRE')` não resolve — entre o `SELECT` e o `INSERT`
+  cabe a outra transação.
+- `CHECK` de preço positivo, de coerência de fechamento e de cancelamento.
+
+Fechar conta usa `SELECT ... FOR UPDATE`: dois caixas clicando junto, um recebe 409.
+
+**E criar pedido toma o mesmo lock** — isto não estava aqui até os testes rodarem.
+O `FOR UPDATE` do fechamento protegia a comanda contra outro *fechamento*, mas
+não contra um *pedido*: `criarPedido` lia o status e inseria ~4 queries depois, e
+o caixa fechando nessa janela commitava no meio. O pedido entrava numa comanda já
+`FECHADA`, fora do total recém-gravado — a cozinha preparava, o cliente comia,
+ninguém cobrava. Reproduzido em 5 de 8 tentativas antes do conserto.
+
+Travar a comanda antes de ler o status ordena os dois: ou o fechamento espera e
+soma o pedido, ou o pedido relê `FECHADA` e devolve 409. De quebra resolve a
+colisão de `seq` — `aggregate(_max) + 1` fora de lock fazia dois pedidos
+simultâneos calcularem o mesmo número e estourar em `@@unique([comandaId, seq])`,
+que virava **500**. Quatro amigos pedindo junto: três tomavam "erro interno".
+
+A lição não é sobre lock. É que `FOR UPDATE` na linha certa não vale nada se a
+decisão for tomada **antes** dele.
+
+### A chave de idempotência cobre o carrinho — e o que tem dentro dele
+
+O celular manda `Idempotency-Key` no POST de pedido. A chave nasce com o carrinho,
+não com a tentativa de envio ([MenuPage.tsx](apps/web/src/pages/menu/MenuPage.tsx)):
+gerar um UUID novo a cada retry anularia o mecanismo. Ela só morre quando o pedido
+entra — no erro ela sobrevive, que é justamente quando ela serve.
+
+Isso está certo, e o teste confirma: quatro POSTs simultâneos com a mesma chave
+geram **um** pedido, sem 500.
+
+Mas a chave identificava a *tentativa* e não o *conteúdo*, e isso abria uma perda
+silenciosa. Rede cai depois de o servidor gravar a picanha; o cliente adiciona uma
+coca e reenvia com a mesma chave (o front não a limpou, corretamente). O servidor
+achava a chave e devolvia o pedido original com **200**. O front tratava como
+sucesso, limpava o carrinho — **e a coca evaporava**. Sem erro, sem log.
+
+Agora o servidor compara os itens recebidos com os do pedido gravado e devolve
+**409 `IDEMPOTENCY_KEY_REUSADA`**. A comparação é sobre o que o cliente *pediu*
+(`produtoId`, `qtd`, `participanteId`, `observacao`) e deliberadamente ignora:
+
+- **ordem** — o mesmo carrinho embaralhado é o mesmo pedido;
+- **preço** — é snapshot do servidor, não vem do cliente;
+- **`canceladoEm`** — se a cozinha cancelou o item entre a tentativa e o retry,
+  o retry continua sendo o mesmo pedido. Assinar o que aconteceu *depois* faria
+  uma ação da cozinha virar 409 na cara de quem só tem rede ruim.
+
+Não há coluna de hash: os itens do pedido **já são** o payload. Uma segunda cópia
+divergiria — o mesmo motivo que põe `total.ts` no `shared`.
+
+**E o carrinho congela enquanto a chave viver.** Esse 409 correto criou, na tela,
+um loop fechado — verificado no navegador: o cliente adicionava um item, tocava
+"Enviar", tomava 409, e a mensagem *"Toque de novo — não vai duplicar"* mandava
+repetir a única ação que nunca passaria. Três toques, três 409. E ele não via a
+coxinha que já estava na cozinha, porque `pedido:novo` vai só para a cozinha
+("o cliente já tem a resposta do POST" — premissa que quebra justo quando a
+resposta se perde, que é o caso inteiro do `Idempotency-Key`).
+
+Com `Adicionar` desabilitado enquanto há erro pendente, o payload não pode
+divergir: o reenvio carrega os mesmos itens, o servidor devolve o pedido original
+com 200, o `onSuccess` limpa o carrinho e recarrega a comanda — e a coxinha
+aparece. A mensagem volta a ser verdade em vez de armadilha.
+
+### Socket não é fonte de verdade
+
+Estado inicial sempre por HTTP (`GET /cozinha/pedidos`). O socket só aplica deltas
+via `setQueryData` — **não** `invalidateQueries`, senão 40 pedidos virariam 40
+refetches na hora do pico. No `reconnect`, aí sim, invalida tudo: os eventos
+perdidos durante a queda não existem e nenhuma fila os recupera.
+
+Ver [`apps/web/src/realtime/useSocket.ts`](apps/web/src/realtime/useSocket.ts).
+
+## Estrutura
+
+```
+packages/shared/    schemas Zod, nomes de evento, máquina de estados, aritmética de dinheiro
+apps/api/           Fastify + Prisma + Socket.IO
+apps/web/           React + TanStack Query
+```
+
+`status.ts` e `total.ts` ficam em `shared` porque o front precisa dos dois: o cliente
+vê o total, o painel precisa do próximo status para desenhar o botão. Duas
+implementações de cálculo de dinheiro divergiriam na hora de fechar a conta.
+
+## Antes de qualquer piloto
+
+Este código é um exercício. Enquanto for exercício, o `k` fraco está **certo**:
+não se otimiza fechadura de casa sem fundação, e isto aqui nunca rodou.
+
+O risco não é o design. É a transição. O convite pra testar não vem com checklist
+— vem por WhatsApp numa quinta ("traz aí sexta que a gente testa"), e nessa hora
+ninguém reabre esta análise. Por isso ela está escrita aqui e não na memória de
+quem escreveu.
+
+**Se a mesa 14 for ter o jantar de estranhos em cima, isto precisa ser verdade:**
+
+- [ ] **O cliente vê quem pediu o quê.** Não só o total. O dado já existe
+      (`PedidoItem.participanteId`); falta a UI. Sem isso a defesa real do sistema
+      — o cliente estranhar — não existe, e o `k` fraco deixa de ser aceitável.
+- [ ] **O caixa confere item a item antes de cobrar.** Isto é controle
+      *operacional*, não software. Não assuma: **fale com a pessoa do caixa.**
+      Se ela só olha o total, o item acima não salva ninguém.
+- [ ] **Entrada em comanda aberta é aprovada por quem já está na mesa.**
+      ("Ana quer entrar. Liberar?") — 1 endpoint + 1 evento de socket. É o único
+      oráculo de presença física disponível de graça: os celulares que já estão
+      sentados ali. O atacante remoto não passa porque ninguém na mesa o conhece.
+      Furo conhecido e aceito: mesa `LIVRE` — o primeiro a escanear vira dono, e
+      pode ser o cara de casa. Mitiga sozinho: a primeira pessoa real a sentar
+      estranha uma comanda que já existe.
+- [ ] **Rotação de mesa comprometida é procedimento, não improviso.**
+      `UPDATE mesas SET qr_secret = ... WHERE numero = 14` + reimprimir. Já
+      documentado em [`scripts/gerar-qr.ts`](apps/api/scripts/gerar-qr.ts).
+
+Alternativas descartadas, pra não serem redescobertas:
+
+- **Rotacionar o `k` por refeição** — exige reimprimir adesivo a cada mesa que
+  vira. É operação, não software.
+- **Garçom aprova cada entrada** — mata o ponto do produto (pedir sem chamar
+  garçom).
+- **Código rotativo num display na mesa** — vira outro produto, com hardware.
+
+## O que falta
+
+- [x] ~~Rodar `npm install` e corrigir o que não compilar~~ — compilou limpo.
+      Os 23 erros de tipo do `api` eram um só: faltava `prisma generate`, hoje
+      no `postinstall`. O que estava quebrado não era código: faltava o
+      `.env.example` e a migration `001_init`.
+- [x] ~~Testes de integração (Testcontainers): corrida no `/join`~~ —
+      [`test/sessao.join.test.ts`](apps/api/test/sessao.join.test.ts). Precisa de
+      Docker; sobe um `postgres:16` descartável. Achou um 500 real no boot.
+- [x] ~~duplo `/fechar`~~ — [`test/comanda.fechar.test.ts`](apps/api/test/comanda.fechar.test.ts).
+      A claim do `FOR UPDATE` era verdadeira. Mas o teste achou dois bugs ao lado
+      dela: comida de graça e o 500 do `seq`.
+- [x] ~~Idempotência do POST de pedido~~ —
+      [`test/pedido.idempotencia.test.ts`](apps/api/test/pedido.idempotencia.test.ts).
+      O mecanismo passou de primeira: 4 requests simultâneos com a mesma chave =
+      1 pedido, zero 500. Mas o teste achou o buraco ao lado: a chave não cobria
+      o **conteúdo**. Ver [A chave de idempotência](#a-chave-de-idempotência-cobre-o-carrinho-e-o-que-tem-dentro-dele).
+- [ ] **Front: tratar o 409 `IDEMPOTENCY_KEY_REUSADA`.** Hoje o servidor está
+      certo e a tela não sabe disso — o cliente veria um erro genérico. Precisa
+      dizer *"sua picanha já foi registrada; a coca ainda não foi enviada"*,
+      recarregar a comanda e deixar só o item novo no carrinho, com chave nova.
+- [x] ~~Isolamento de rooms do socket~~ —
+      [`test/realtime/rooms.test.ts`](apps/api/test/realtime/rooms.test.ts).
+      A regra estava certa e agora está guardada. **Passou de primeira** — e o
+      teste foi validado reintroduzindo `socket.on('join', ...)` no io.ts: fica
+      vermelho com a conta da mesa vizinha, total incluso, chegando no celular
+      errado.
+- [x] ~~Front: nenhuma tela abriu.~~ — abriu. O fluxo do cliente foi dirigido com
+      Chromium de verdade: escanear → apelido → join → cardápio → carrinho →
+      pedido. Funcionou de primeira, sem erro de console. A URL perde o `?k=`
+      como prometido. **Mas achou o loop do 409** (acima) — corrigido.
+- [ ] **E2E Playwright versionado.** A verificação acima foi feita com um script
+      descartável. Nada no repo guarda o `travado` do MenuPage: remover uma linha
+      traz o loop de volta e nenhum teste reclama. O repro que achou o bug
+      (interceptar o POST, deixar chegar no servidor, abortar a resposta) é a
+      base pronta.
+- [ ] Painel da cozinha e do caixa: só o fluxo do cliente foi dirigido.
+- [ ] E2E Playwright do fluxo inteiro, com três browsers em paralelo
+- [ ] CRUD de admin (produtos, categorias, mesas)
+- [x] ~~Campo de valor recebido em dinheiro no caixa (hoje assume valor exato)~~ —
+      este item estava errado: `valorRecebidoCentavos` e o cálculo de troco já
+      existiam no `fecharComanda`, com `refine` no Zod exigindo o valor quando o
+      método é `DINHEIRO`. Agora testado (valor insuficiente → 400, troco correto).
+      Falta só o campo na **tela** do caixa.
+- [ ] `@socket.io/redis-adapter` ao passar de uma instância

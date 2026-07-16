@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- O QR leva o segredo da mesa na querystring. Sem isto, o navegador manda
+         a URL inteira no header Referer ao carregar imagem de outro dominio. -->
+    <meta name="referrer" content="no-referrer" />
+    <title>Cardapio Digital</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Segredos. O .env.example e versionado; o .env NUNCA.
+.env
+.env.*
+!.env.example
+
+# Cada PNG carrega o qr_secret de uma mesa dentro da URL codificada.
+# Versionar isto equivale a publicar as chaves de todas as mesas.
+qrcodes/
+
+# Prisma gera o client aqui (postinstall).
+node_modules/.prisma/
+
+npm-debug.log*
+yarn-error.log*
+.DS_Store
+.vscode/
+.idea/
+coverage/

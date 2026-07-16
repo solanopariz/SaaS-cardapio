@@ -1,0 +1,201 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  COZINHA
+  CAIXA
+}
+
+enum StatusMesa {
+  LIVRE
+  OCUPADA
+  AGUARDANDO_FECHAMENTO
+}
+
+enum StatusComanda {
+  ABERTA
+  AGUARDANDO_PAGAMENTO
+  FECHADA
+  CANCELADA
+}
+
+enum StatusPedido {
+  RECEBIDO
+  EM_PREPARO
+  PRONTO
+  ENTREGUE
+  CANCELADO
+}
+
+enum MetodoPagamento {
+  DINHEIRO
+  CREDITO
+  DEBITO
+  PIX
+  OUTRO
+}
+
+model Usuario {
+  id        Int      @id @default(autoincrement())
+  nome      String
+  email     String   @unique
+  senhaHash String   @map("senha_hash")
+  role      Role
+  ativo     Boolean  @default(true)
+  criadoEm  DateTime @default(now()) @map("criado_em")
+
+  comandasFechadas Comanda[] @relation("ComandaFechadaPor")
+
+  @@map("usuarios")
+}
+
+model Mesa {
+  id     Int        @id @default(autoincrement())
+  numero Int        @unique
+  /// Segredo estatico de 16 chars, impresso no QR Code colado na mesa.
+  ///
+  /// NAO prova presenca fisica. Prova que voce ESTEVE na mesa alguma vez —
+  /// o adesivo e publico e imutavel, entao todo ex-cliente, todo garcom demitido
+  /// e qualquer um que fotografou a mesa tem esta chave para sempre. Ela impede
+  /// chute de URL (64 bits), nao impede quem leu o adesivo.
+  ///
+  /// Consequencia: /join nao consegue distinguir "amigo chegou atrasado" de
+  /// "ex-cliente em casa" — mesma chave, mesma comanda aberta, mesmo deviceId novo.
+  /// Separar os dois exige um oraculo de presenca que o servidor nao tem.
+  /// Ver "Antes de qualquer piloto" no README.
+  ///
+  /// NAO rotaciona — quem rotaciona e o JWT de comanda emitido no /join.
+  qrSecret String   @map("qr_secret")
+  status   StatusMesa @default(LIVRE)
+
+  comandas Comanda[]
+
+  @@map("mesas")
+}
+
+model Categoria {
+  id    Int     @id @default(autoincrement())
+  nome  String
+  ordem Int     @default(0)
+  ativa Boolean @default(true)
+
+  produtos Produto[]
+
+  @@map("categorias")
+}
+
+model Produto {
+  id          Int     @id @default(autoincrement())
+  categoriaId Int     @map("categoria_id")
+  nome        String
+  descricao   String?
+  /// Preco ATUAL do cardapio. O preco cobrado vive em PedidoItem.precoUnitarioCentavos.
+  precoCentavos Int     @map("preco_centavos")
+  imagemUrl     String? @map("imagem_url")
+  disponivel    Boolean @default(true)
+  ordem         Int     @default(0)
+
+  categoria Categoria    @relation(fields: [categoriaId], references: [id], onDelete: Restrict)
+  itens     PedidoItem[]
+
+  @@index([categoriaId])
+  @@map("produtos")
+}
+
+model Comanda {
+  id       Int           @id @default(autoincrement())
+  mesaId   Int           @map("mesa_id")
+  status   StatusComanda @default(ABERTA)
+  abertaEm DateTime      @default(now()) @map("aberta_em")
+
+  fechadaEm           DateTime?        @map("fechada_em")
+  fechadaPorUsuarioId Int?             @map("fechada_por_usuario_id")
+  metodoPagamento     MetodoPagamento? @map("metodo_pagamento")
+  /// NULL enquanto ABERTA. Preenchido no fechamento como recibo imutavel.
+  /// Enquanto aberta, o total e sempre derivado (calcularTotalComanda).
+  totalCentavos Int? @map("total_centavos")
+
+  mesa       Mesa     @relation(fields: [mesaId], references: [id], onDelete: Restrict)
+  fechadaPor Usuario? @relation("ComandaFechadaPor", fields: [fechadaPorUsuarioId], references: [id], onDelete: SetNull)
+
+  participantes Participante[]
+  pedidos       Pedido[]
+
+  @@index([mesaId])
+  @@index([status])
+  @@map("comandas")
+}
+
+model Participante {
+  id        Int      @id @default(autoincrement())
+  comandaId Int      @map("comanda_id")
+  apelido   String
+  deviceId  String   @map("device_id")
+  criadoEm  DateTime @default(now()) @map("criado_em")
+
+  comanda Comanda      @relation(fields: [comandaId], references: [id], onDelete: Cascade)
+  itens   PedidoItem[]
+
+  /// Mesmo celular reentrando na mesma comanda reaproveita o participante.
+  @@unique([comandaId, deviceId])
+  @@map("participantes")
+}
+
+model Pedido {
+  id        Int          @id @default(autoincrement())
+  comandaId Int          @map("comanda_id")
+  /// Numero sequencial dentro da comanda. "Pedido 3 da mesa 14".
+  seq       Int
+  status    StatusPedido @default(RECEBIDO)
+  criadoEm  DateTime     @default(now()) @map("criado_em")
+
+  motivoCancelamento String? @map("motivo_cancelamento")
+
+  /// Enviada pelo celular no header Idempotency-Key. Wi-Fi de restaurante e ruim
+  /// e o celular reenvia o POST. Sem isto o cliente pede duas picanhas.
+  idempotencyKey String @map("idempotency_key")
+
+  comanda Comanda      @relation(fields: [comandaId], references: [id], onDelete: Cascade)
+  itens   PedidoItem[]
+
+  @@unique([comandaId, idempotencyKey])
+  @@unique([comandaId, seq])
+  @@index([status])
+  @@index([comandaId])
+  @@map("pedidos")
+}
+
+model PedidoItem {
+  id       Int @id @default(autoincrement())
+  pedidoId Int @map("pedido_id")
+  produtoId Int @map("produto_id")
+  /// NULL = item compartilhado da mesa. Fica no ITEM, nao no pedido:
+  /// "uma coca pra mim, uma pro Joao" num unico envio.
+  participanteId Int? @map("participante_id")
+
+  qtd Int
+  /// SNAPSHOT do preco no momento do pedido. Se o cardapio mudar de preco,
+  /// a comanda ja aberta nao muda de valor.
+  precoUnitarioCentavos Int     @map("preco_unitario_centavos")
+  observacao            String?
+
+  /// Estorno pontual ("acabou o queijo") sem cancelar o pedido inteiro.
+  /// Item cancelado nao entra no SUM. Cancelar o ultimo item ativo de um
+  /// pedido cancela o pedido junto, na mesma transacao.
+  canceladoEm         DateTime? @map("cancelado_em")
+  motivoCancelamento  String?   @map("motivo_cancelamento")
+
+  pedido       Pedido        @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  produto      Produto       @relation(fields: [produtoId], references: [id], onDelete: Restrict)
+  participante Participante? @relation(fields: [participanteId], references: [id], onDelete: SetNull)
+
+  @@index([pedidoId])
+  @@map("pedido_itens")
+}
