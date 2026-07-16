@@ -4,6 +4,7 @@ import {
   calcularTotalComanda,
   calcularTotalPorParticipante,
   formatarBRL,
+  parsearBRL,
   type ItemCobravel,
 } from './total.js';
 
@@ -125,5 +126,75 @@ describe('formatarBRL', () => {
     //   = espaco nao separavel que o Intl insere apos "R$"
     expect(formatarBRL(1250).replace(/ /g, ' ')).toBe('R$ 12,50');
     expect(formatarBRL(0).replace(/ /g, ' ')).toBe('R$ 0,00');
+  });
+});
+
+describe('parsearBRL', () => {
+  it('virgula e ponto dao o mesmo centavo', () => {
+    expect(parsearBRL('19,90')).toBe(1990);
+    expect(parsearBRL('19.90')).toBe(1990);
+  });
+
+  it('inteiro sem separador', () => {
+    expect(parsearBRL('19')).toBe(1900);
+    expect(parsearBRL('0')).toBe(0);
+  });
+
+  it('um decimal so e a casa das DEZENAS de centavo', () => {
+    expect(parsearBRL('19,9')).toBe(1990); // dezenove e noventa, nao 19,09
+  });
+
+  /**
+   * O caso que justifica a funcao existir. parseFloat('19.99') * 100 da
+   * 1998.9999999999998; o preco vai errado para o banco ou o arredondamento
+   * vira aposta. Aqui os centavos saem do texto, inteiros.
+   */
+  it('nao passa por float', () => {
+    expect(parsearBRL('19,99')).toBe(1999);
+    expect(parsearBRL('0,07')).toBe(7);
+    expect(parsearBRL('8,29')).toBe(829);
+    expect(parsearBRL('1234,56')).toBe(123456);
+  });
+
+  it('aceita o R$ que o operador cola junto', () => {
+    expect(parsearBRL('R$ 19,90')).toBe(1990);
+    expect(parsearBRL('  19,90  ')).toBe(1990);
+  });
+
+  it('lixo vira null, nao NaN nem zero', () => {
+    for (const t of ['', 'abc', '19,905', '-5', '1,2,3', 'R$', '.']) {
+      expect(parsearBRL(t)).toBeNull();
+    }
+  });
+  /**
+   * Ida e volta ate R$ 999,99. Acima disso o Intl insere ponto de milhar, que
+   * o parser recusa DE PROPOSITO — ver o teste seguinte.
+   *
+   * O   e o NBSP que o Intl enfia depois do "R$".
+   */
+  it('ida e volta com formatarBRL abaixo do milhar', () => {
+    for (const c of [0, 7, 829, 1990, 99999]) {
+      expect(parsearBRL(formatarBRL(c).replace(/ /gu, ' '))).toBe(c);
+    }
+  });
+
+  /**
+   * DECISAO, nao limitacao esquecida: `parsearBRL` NAO e o inverso total de
+   * `formatarBRL`, e este teste existe para que ninguem "conserte" isso sem ler.
+   *
+   * "1.500" e ambiguo — em pt-BR e mil e quinhentos, mas quem tem o dedo no
+   * teclado americano digita isso querendo R$ 1,50. Adivinhar erra por 1000x e
+   * em silencio; recusar erra alto e o operador reescreve. Numa carta de vinhos
+   * essa diferenca e a conta inteira.
+   *
+   * Quem chama e responsavel por dizer "sem ponto de milhar" ao usuario.
+   */
+  it('recusa ponto de milhar, inclusive o que o proprio formatarBRL produz', () => {
+    expect(parsearBRL('1.234,56')).toBeNull();
+    expect(parsearBRL('1.500')).toBeNull();
+    expect(parsearBRL(formatarBRL(123456).replace(/ /gu, ' '))).toBeNull();
+
+    // E o mesmo valor, escrito sem o separador, passa.
+    expect(parsearBRL('1234,56')).toBe(123456);
   });
 });

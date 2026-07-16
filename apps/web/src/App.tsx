@@ -7,6 +7,7 @@ import { LoginPage } from './pages/LoginPage.jsx';
 import { MenuPage } from './pages/menu/MenuPage.jsx';
 import { CozinhaPage } from './pages/painel/CozinhaPage.jsx';
 import { CaixaPage } from './pages/painel/CaixaPage.jsx';
+import { AdminPage } from './pages/painel/AdminPage.jsx';
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -58,6 +59,18 @@ export function App() {
               element={
                 <RotaProtegida roles={['CAIXA']}>
                   <CaixaPage />
+                </RotaProtegida>
+              }
+            />
+
+            {/* Editar cardapio e raro e calmo; o caixa e o dia inteiro e com
+                pressa. Rota separada para um erro de clique no balco nao virar
+                mudanca de preco durante o movimento. */}
+            <Route
+              path="/painel/admin"
+              element={
+                <RotaProtegida roles={['ADMIN']}>
+                  <AdminPage />
                 </RotaProtegida>
               }
             />

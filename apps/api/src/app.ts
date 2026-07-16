@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { env } from './lib/env.js';
 import { AppError } from './lib/errors.js';
 import authPlugin from './plugins/auth.js';
+import { adminRoutes } from './modules/admin/admin.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { comandaRoutes } from './modules/comanda/comanda.routes.js';
 import { menuRoutes } from './modules/menu/menu.routes.js';
@@ -27,6 +28,7 @@ export function buildApp(): FastifyInstance {
       await api.register(menuRoutes);
       await api.register(pedidoRoutes);
       await api.register(comandaRoutes);
+      await api.register(adminRoutes);
     },
     { prefix: '/api' },
   );

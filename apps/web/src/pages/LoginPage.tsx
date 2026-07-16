@@ -6,7 +6,7 @@ import { useStaff, type Role } from '../auth/StaffContext.jsx';
 const DESTINO: Record<Role, string> = {
   COZINHA: '/painel/cozinha',
   CAIXA: '/painel/caixa',
-  ADMIN: '/painel/caixa',
+  ADMIN: '/painel/admin',
 };
 
 export function LoginPage() {

@@ -3,7 +3,8 @@
 Pedidos por QR Code na mesa, painel de cozinha em tempo real, fechamento no caixa.
 
 > **Estado:** compila, migra, roda. Testado em Node 22.11 / Postgres 16.
-> `npm test` verde: 69 testes (23 em `shared`, 46 de integração no `api`).
+> `npm test` verde: 96 testes (31 em `shared`, 65 de integração no `api`), mais
+> 20 E2E em `npm run test:e2e`.
 > As 5 invariantes SQL da migration 002 foram atacadas direto no banco, por fora
 > da aplicação, e todas rejeitam. O isolamento de rooms do socket foi verificado
 > com conexões reais — e o teste foi validado reintroduzindo a falha, para provar
@@ -340,7 +341,7 @@ Alternativas descartadas, pra não serem redescobertas:
       Chromium de verdade: escanear → apelido → join → cardápio → carrinho →
       pedido. Funcionou de primeira, sem erro de console. A URL perde o `?k=`
       como prometido. **Mas achou o loop do 409** (acima) — corrigido.
-- [x] ~~E2E Playwright versionado~~ — [`e2e/`](e2e/), 14 testes em ~19s.
+- [x] ~~E2E Playwright versionado~~ — [`e2e/`](e2e/), 20 testes em ~41s.
       Guarda o `travado` do MenuPage (verificado removendo a linha: fica
       vermelho), a limpeza do `?k=` da URL, o F5, o tempo real nos dois painéis
       e o fechamento. Achou o `credencial` que sobrevivia ao fim da sessão.
@@ -349,7 +350,30 @@ Alternativas descartadas, pra não serem redescobertas:
       total do grid do caixa ficava congelado. O tempo real funciona: pedido
       aparece na cozinha em ~250ms, `EM_PREPARO` volta ao celular em ~250ms.
 - [ ] E2E Playwright do fluxo inteiro, com três browsers em paralelo
-- [ ] CRUD de admin (produtos, categorias, mesas)
+- [x] ~~CRUD de admin (produtos, categorias, mesas)~~ — produtos e categorias, em
+      [`/painel/admin`](apps/web/src/pages/painel/AdminPage.tsx). **Mesas ficaram
+      de fora de propósito:** criar mesa é gerar `qr_secret` e imprimir adesivo —
+      fluxo físico, não CRUD, e merece decisão própria (o que acontece com o QR
+      já colado se a mesa for recriada?). Seguem vindo do seed.
+
+      Sem `DELETE`: `PedidoItem.produto` é `onDelete: Restrict`, e apagar produto
+      vendido apagaria o passado. Sair do cardápio é `disponivel:false` /
+      `ativa:false` — campos que já existiam.
+
+      Achou três coisas ao rodar:
+      - **`categoria.ativa` era filtrada no `/menu` e ignorada no `criarPedido`.**
+        Inofensivo enquanto nada setava `ativa:false`; a tela de admin é o que
+        tornava o caminho alcançável. Desativar categoria escondia mas não
+        impedia — celular com o menu aberto pedia e a cozinha imprimia.
+      - **`DESTINO['ADMIN']` apontava para `/painel/caixa`**: o dono logaria e
+        nunca veria a tela nova. Mesmo formato do bug do seed.
+      - **O seed grava categoria com id explícito e a sequence não avança.** O
+        primeiro "Criar categoria" no painel dava 500, e o erro se repetia uma
+        vez por categoria semeada antes de "passar sozinho" na quinta. Corrigido
+        com `setval` no fim do seed. Só apareceu porque o E2E roda o seed de
+        verdade — a integração sobe banco vazio, que não tem com o que colidir.
+- [ ] Ordenação (`ordem`) e imagem de produto na tela de admin: os campos existem
+      no schema e na API, a tela ainda não os edita.
 - [x] ~~Campo de valor recebido em dinheiro no caixa (hoje assume valor exato)~~ —
       este item estava errado: `valorRecebidoCentavos` e o cálculo de troco já
       existiam no `fecharComanda`, com `refine` no Zod exigindo o valor quando o

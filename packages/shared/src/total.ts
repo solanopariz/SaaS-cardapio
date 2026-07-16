@@ -75,6 +75,25 @@ export function calcularTotalPorParticipante<
   return mapa;
 }
 
+/**
+ * "19,90" -> 1990. O inverso de `formatarBRL`, para o admin digitar preco.
+ * `null` = nao e um preco valido (quem chama decide o que dizer ao usuario).
+ *
+ * Nunca via parseFloat: `parseFloat('19.99') * 100` e 1998.9999999999998, e
+ * arredondar isso e apostar. Aqui os centavos saem do PROPRIO texto, como
+ * inteiro — os reais e os centavos nunca se encontram num float.
+ *
+ * Aceita virgula ou ponto: o teclado do balcao tem os dois e o operador nao
+ * quer saber qual e o "certo".
+ */
+export function parsearBRL(texto: string): number | null {
+  const limpo = texto.trim().replace(/^R\$\s*/u, '');
+  const m = /^(\d+)(?:[.,](\d{1,2}))?$/u.exec(limpo);
+  if (!m) return null;
+  // padEnd, nao padStart: "19,9" e dezenove e noventa, nao dezenove e nove.
+  return Number(m[1]) * 100 + Number((m[2] ?? '').padEnd(2, '0'));
+}
+
 /** Centavos -> "R$ 12,50". Formatacao, nao aritmetica. */
 export function formatarBRL(centavos: number): string {
   return (centavos / 100).toLocaleString('pt-BR', {

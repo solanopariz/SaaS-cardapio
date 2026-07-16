@@ -149,8 +149,13 @@ export async function criarPedido(
       }
 
       const produtoIds = [...new Set(input.itens.map((i) => i.produtoId))];
+      // `categoria: { ativa: true }` espelha o filtro do GET /menu. Sem ele os
+      // dois divergem: a categoria desativada some da tela mas continua
+      // aceitando pedido, e um celular com o menu ja carregado (ou com o ETag
+      // em cache, ate 30s) manda a bebida que o dono acabou de tirar do
+      // cardapio — 201, e a cozinha imprime.
       const produtos = await tx.produto.findMany({
-        where: { id: { in: produtoIds }, disponivel: true },
+        where: { id: { in: produtoIds }, disponivel: true, categoria: { ativa: true } },
       });
 
       if (produtos.length !== produtoIds.length) {

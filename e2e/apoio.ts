@@ -8,6 +8,7 @@ export const prisma = new PrismaClient({ datasources: { db: { url: E2E.databaseU
 export const SENHA_STAFF = 'trocar123';
 export const EMAIL_COZINHA = 'cozinha@cardapio.local';
 export const EMAIL_CAIXA = 'caixa@cardapio.local';
+export const EMAIL_ADMIN = 'admin@cardapio.local';
 
 /**
  * Cada teste pega uma mesa propria e nunca reusa.

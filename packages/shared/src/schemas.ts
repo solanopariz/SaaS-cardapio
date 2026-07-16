@@ -87,6 +87,23 @@ export const categoriaSchema = z.object({
   ativa: z.boolean().default(true),
 });
 
+export type Produto = z.infer<typeof produtoSchema>;
+export type Categoria = z.infer<typeof categoriaSchema>;
+
+/**
+ * PATCH: campo ausente = "nao mexe", que e exatamente `undefined` no update do
+ * Prisma. Nao confundir com `descricao: null`, que e "apaga a descricao" — por
+ * isso `.partial()` e nao um objeto de opcionais escrito a mao: o `.nullish()`
+ * de dentro precisa continuar aceitando null explicito.
+ *
+ * Os `.default()` do schema de criacao ficam inertes aqui: o ZodOptional
+ * devolve `undefined` sem chamar o default de dentro. Se nao fosse assim, todo
+ * PATCH de nome carregaria junto um `disponivel: true` que ninguem pediu, e
+ * editar o preco de um produto esgotado o traria de volta ao cardapio.
+ */
+export const produtoUpdateSchema = produtoSchema.partial();
+export const categoriaUpdateSchema = categoriaSchema.partial();
+
 export const mesaSchema = z.object({
   numero: z.number().int().positive(),
 });
